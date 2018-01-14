@@ -137,7 +137,7 @@ while True:
     if(LPGvalue > 0.3*1024):
         data = { "serial" : raspberrySerial, "sensorType" : "LPGSensor", "value" : LPGvalue }
         allData.append(data)
-    if(valueFlame == 0):
+    if(valueFlame > 0):
         data = { "serial" : raspberrySerial, "sensorType" : "FlameSensor", "value" : valueFlame }
         allData.append(data)
     if(tempValue > 30):
@@ -145,10 +145,7 @@ while True:
         allData.append(data)
 
     if allData != []:
-        print(allData)
-        dataToSend = json.dumps(allData)
-        dataToSend = str(dataToSend)
-        requests.post(url, json=dataToSend, headers=headers)
+        requests.post(url, json=allData, headers=headers)
         
     previousLPGValue = LPGvalue
     previousCOValue = COValue
