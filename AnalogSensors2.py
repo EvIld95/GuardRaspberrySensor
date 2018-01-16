@@ -22,6 +22,8 @@ config = {
 firebase = pyrebase.initialize_app(config)
 firebaseDB = firebase.database()
 
+sendedTimestamp = {'LPGSensor' : 0, 'COSensor': 0, 'TempSensor': 0, 'FlameSensor': 0}
+
 os.system('modprobe w1-gpio')
 os.system('modprobe w1-therm')
 wiringpi.wiringPiSetup()
@@ -133,20 +135,27 @@ while True:
     if(COValue > 0.3*1024):
         data = { "serial" : raspberrySerial, "sensorType" : "COSensor", "value" : COValue }
         allData.append(data)
-
+        
     if(LPGvalue > 0.3*1024):
         data = { "serial" : raspberrySerial, "sensorType" : "LPGSensor", "value" : LPGvalue }
         allData.append(data)
+        
     if(valueFlame > 0):
         data = { "serial" : raspberrySerial, "sensorType" : "FlameSensor", "value" : valueFlame }
         allData.append(data)
+        
     if(tempValue > 30):
         data = { "serial" : raspberrySerial, "sensorType" : "TempSensor", "value" : tempValue }
         allData.append(data)
 
     if allData != []:
+        print((time.time() - sendedTimestamp[allData[0]['sensorType']]))        
+    
+    if allData != [] and (time.time() - sendedTimestamp[allData[0]['sensorType']] > 60):
         requests.post(url, json=allData, headers=headers)
-        
+        for item in allData:
+            sendedTimestamp[item['sensorType']] = time.time()
+        print("Send notification")
     previousLPGValue = LPGvalue
     previousCOValue = COValue
     previousTemp = tempValue
