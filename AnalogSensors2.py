@@ -9,6 +9,8 @@ import requests
 import json
 
 url = "http://52.236.165.15:80/backend/v1/notification"
+urlPIR = "http://52.236.165.15:80/backend/v1/PIRnotification"
+
 headers = {'Content-type': 'application/json'}
 config = {
     "apiKey": "AIzaSyCHL_Er9JtpQbadJtoaZbvYusIY-tBRVC0",
@@ -29,7 +31,10 @@ os.system('modprobe w1-therm')
 wiringpi.wiringPiSetup()
 
 flameSensorPin = 0
+pirSensorPin = 1
+
 wiringpi.pinMode(flameSensorPin, 0)
+wiringpi.pinMode(pirSensorPin, 0)
 
 base_dir = '/sys/bus/w1/devices/'
 device_folder = glob.glob(base_dir + '28*')[0]
@@ -43,6 +48,7 @@ previousLPGValue = 0
 previousCOValue = 0
 previousTemp = 0.0
 previousFlame = -1
+previousPIR = -1
 
 spi = spidev.SpiDev()
 spi.open(0, 0)
@@ -99,21 +105,31 @@ firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
 
 
 while True:
-    
-    print("----Kolejny pomiar-------")
+    valuePIR = int(wiringpi.digitalRead(pirSensorPin)) 
     valueFlame = int(not wiringpi.digitalRead(flameSensorPin))
     LPGvalue = readadc(LPGSensor)
     tempValue = read_temp()
     print("Temp Value %f" % tempValue)
     print("LPGSensor: %d" % LPGvalue)
+    
     if(valueFlame == 0):
         print("FlameSensor: OK!")
     else:
         print("FlameSensor: Detected Fire!")
+
+    if(valuePIR == 0):
+        print("PIRSensor: OK!")
+    else:
+        print("PIRSensor: Detected Movement!")
+    
     
     COValue = readadc(COSensor)
     print("COSensor: %d" % COValue)
     time.sleep(delay)
+
+    if((previousPIR != valuePIR) and (valuePIR == 1)):
+        jsonData = { "serial" : raspberrySerial, "message": "Detected Movement"}
+        requests.post(urlPIR, json=jsonData, headers=headers)
         
     if(abs(COValue - previousCOValue) > 30):
         dataUpdate = { "COSensor" : { "value" : normalizeValue(float(COValue)) } }
