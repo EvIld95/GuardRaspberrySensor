@@ -24,7 +24,7 @@ config = {
 firebase = pyrebase.initialize_app(config)
 firebaseDB = firebase.database()
 
-sendedTimestamp = {'LPGSensor' : 0, 'COSensor': 0, 'TempSensor': 0, 'FlameSensor': 0}
+sendedTimestamp = {'LPGSensor' : 0, 'COSensor': 0, 'TempSensor': 0, 'FlameSensor': 0, 'PIRSensor': 0}
 
 os.system('modprobe w1-gpio')
 os.system('modprobe w1-therm')
@@ -127,9 +127,10 @@ while True:
     print("COSensor: %d" % COValue)
     time.sleep(delay)
 
-    if((previousPIR != valuePIR) and (valuePIR == 1)):
+    if((previousPIR != valuePIR) and (valuePIR == 1) and (time.time() - sendedTimestamp['PIRSensor'] > 60)):
         jsonData = { "serial" : raspberrySerial, "message": "Detected Movement"}
         requests.post(urlPIR, json=jsonData, headers=headers)
+        sendedTimestamp['PIRSensor'] = time.time()
         
     if(abs(COValue - previousCOValue) > 30):
         dataUpdate = { "COSensor" : { "value" : normalizeValue(float(COValue)) } }
@@ -171,7 +172,7 @@ while True:
         requests.post(url, json=allData, headers=headers)
         for item in allData:
             sendedTimestamp[item['sensorType']] = time.time()
-        print("Send notification")
+        
     previousLPGValue = LPGvalue
     previousCOValue = COValue
     previousTemp = tempValue
