@@ -127,8 +127,8 @@ while True:
     print("COSensor: %d" % COValue)
     time.sleep(delay)
 
-    if((previousPIR != valuePIR) and (valuePIR == 1) and (time.time() - sendedTimestamp['PIRSensor'] > 60)):
-        jsonData = { "serial" : raspberrySerial, "message": "Detected Movement"}
+    if((previousPIR != valuePIR) and (valuePIR == 1)):
+        jsonData = { "serial" : raspberrySerial, "message": "Movement detected"}
         requests.post(urlPIR, json=jsonData, headers=headers)
         sendedTimestamp['PIRSensor'] = time.time()
         
@@ -149,11 +149,11 @@ while True:
         firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
 
     allData = []
-    if(COValue > 0.3*1024):
+    if(COValue > 0.4*1024):
         data = { "serial" : raspberrySerial, "sensorType" : "COSensor", "value" : COValue }
         allData.append(data)
         
-    if(LPGvalue > 0.3*1024):
+    if(LPGvalue > 0.4*1024):
         data = { "serial" : raspberrySerial, "sensorType" : "LPGSensor", "value" : LPGvalue }
         allData.append(data)
         
