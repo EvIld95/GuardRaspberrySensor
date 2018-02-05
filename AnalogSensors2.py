@@ -149,11 +149,11 @@ while True:
         firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
 
     allData = []
-    if(COValue > 0.4*1024):
+    if(COValue > 0.35*1024):
         data = { "serial" : raspberrySerial, "sensorType" : "COSensor", "value" : COValue }
         allData.append(data)
         
-    if(LPGvalue > 0.4*1024):
+    if(LPGvalue > 0.35*1024):
         data = { "serial" : raspberrySerial, "sensorType" : "LPGSensor", "value" : LPGvalue }
         allData.append(data)
         
