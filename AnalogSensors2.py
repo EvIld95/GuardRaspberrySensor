@@ -7,9 +7,14 @@ import wiringpi
 import pyrebase
 import requests
 import json
+import subprocess
+import signal
+import os
 
-url = "http://52.236.165.15:80/backend/v1/notification"
-urlPIR = "http://52.236.165.15:80/backend/v1/PIRnotification"
+
+url = "http://40.113.150.71:8080/backend/v1/notification"
+urlPIR = "http://40.113.150.71:8080/backend/v1/PIRnotification"
+urlGetOwner = "http://40.113.150.71:8080/backend/v1/devices/raspberryOwner"
 
 headers = {'Content-type': 'application/json'}
 config = {
@@ -24,16 +29,16 @@ config = {
 firebase = pyrebase.initialize_app(config)
 firebaseDB = firebase.database()
 
-sendedTimestamp = {'LPGSensor' : 0, 'COSensor': 0, 'TempSensor': 0, 'FlameSensor': 0, 'PIRSensor': 0}
+sendedTimestamp = {'CO2Sensor' : 0, 'COSensor': 0, 'TempSensor': 0, 'PIRSensor': 0}
 
 os.system('modprobe w1-gpio')
 os.system('modprobe w1-therm')
 wiringpi.wiringPiSetup()
 
-flameSensorPin = 0
+#flameSensorPin = 0
 pirSensorPin = 1
 
-wiringpi.pinMode(flameSensorPin, 0)
+#wiringpi.pinMode(flameSensorPin, 0)
 wiringpi.pinMode(pirSensorPin, 0)
 
 base_dir = '/sys/bus/w1/devices/'
@@ -41,14 +46,17 @@ device_folder = glob.glob(base_dir + '28*')[0]
 device_file = device_folder + '/w1_slave'
 
 delay = 2.0
-LPGSensor = 0
+CO2Sensor = 0
 COSensor = 1
 
-previousLPGValue = 0
+previousCO2Value = 0
 previousCOValue = 0
 previousTemp = 0.0
-previousFlame = -1
 previousPIR = -1
+
+COTreshold = 0.7
+CO2Treshold = 0.35
+TempTreshold = 30.0
 
 spi = spidev.SpiDev()
 spi.open(0, 0)
@@ -94,28 +102,69 @@ def getSerial():
 
   return cpuserial
 
-
 #save raspberry serial with 
 raspberrySerial = getSerial()
+
+jsonData = {'serial': raspberrySerial}
+owner = 'unknown'
+while owner=='unknown':
+    r = requests.post(urlGetOwner, json=jsonData, headers=headers)
+    time.sleep(5)
+    owner = r.json()["owner"]
+    print("Waiting")
+    
+ownerWithoutDot = owner.replace(".", "")
+
 dataUpdate = { "COSensor" : { "value" : 0 },
-               "LPGSensor" : { "value" : 0 },
-               "FlameSensor" : { "value" : 0 },
+               "CO2Sensor" : { "value" : 0 },
                "TempSensor" : { "value" : 0 } }
 firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
+dataUpdate = { "isOn" : 0 }
+firebaseDB.child("stream").child(raspberrySerial).update(dataUpdate)
+dataUpdate = { raspberrySerial : 0 }
+firebaseDB.child("devices").update(dataUpdate)
+dataUpdate = { "tempTreshold" : 30.0, "CO2Treshold": 0.35, "COTreshold": 0.7, "cameraAlwaysOn": False}
+firebaseDB.child("settings").child(ownerWithoutDot).update(dataUpdate)
 
+
+
+
+pro = -1
+def stream_handler(message):
+    global pro
+    isOn = message["data"]
+    if(isOn == 1):
+        pro = subprocess.Popen('/home/pi/Desktop/RaspberrySensor/Camera/monitoring-script/monitoring.sh', stdout=subprocess.PIPE,shell=True,preexec_fn=os.setsid)
+        #subprocess.call(['./Camera/monitoring-script/monitoring.sh'])
+    elif pro != -1:
+        os.killpg(os.getpgid(pro.pid), signal.SIGTERM)
+        #kill subprocess
+
+def checkIfSendInfoNotificationAllowed():
+    for item in allData:
+        if (time.time() - sendedTimestamp[item['sensorType']] > 60):
+            return True
+    return False
+
+def settingsStream_handler(message):
+    global COTreshold
+    global CO2Treshold
+    global TempTreshold
+    COTreshold = message["data"]["COTreshold"]
+    CO2Treshold = message["data"]["CO2Treshold"]
+    TempTreshold = message["data"]["tempTreshold"]
+    
+
+my_stream = firebaseDB.child("stream").child(raspberrySerial).child("isOn").stream(stream_handler)
+my_settingsStream = firebaseDB.child("settings").child(ownerWithoutDot).stream(settingsStream_handler)
 
 while True:
     valuePIR = int(wiringpi.digitalRead(pirSensorPin)) 
-    valueFlame = int(not wiringpi.digitalRead(flameSensorPin))
-    LPGvalue = readadc(LPGSensor)
+    #valueFlame = int(not wiringpi.digitalRead(flameSensorPin))
+    CO2value = readadc(CO2Sensor)
     tempValue = read_temp()
     print("Temp Value %f" % tempValue)
-    print("LPGSensor: %d" % LPGvalue)
-    
-    if(valueFlame == 0):
-        print("FlameSensor: OK!")
-    else:
-        print("FlameSensor: Detected Fire!")
+    print("CO2Sensor: %d" % CO2value)
 
     if(valuePIR == 0):
         print("PIRSensor: OK!")
@@ -132,16 +181,12 @@ while True:
         requests.post(urlPIR, json=jsonData, headers=headers)
         sendedTimestamp['PIRSensor'] = time.time()
         
-    if(abs(COValue - previousCOValue) > 30):
+    if(abs(COValue - previousCOValue) > 20):
         dataUpdate = { "COSensor" : { "value" : normalizeValue(float(COValue)) } }
         firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
 
-    if(abs(LPGvalue - previousLPGValue) > 30):
-        dataUpdate = { "LPGSensor" : { "value" : normalizeValue(float(LPGvalue)) } }
-        firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
-
-    if(previousFlame != valueFlame):
-        dataUpdate = { "FlameSensor" : { "value" : valueFlame } }
+    if(abs(CO2value - previousCO2Value) > 20):
+        dataUpdate = { "CO2Sensor" : { "value" : 1 - normalizeValue(float(CO2value)) } }
         firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
 
     if(tempValue != previousTemp):
@@ -149,34 +194,26 @@ while True:
         firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
 
     allData = []
-    if(COValue > 0.35*1024):
+    if(COValue > COTreshold*1024):
         data = { "serial" : raspberrySerial, "sensorType" : "COSensor", "value" : COValue }
         allData.append(data)
         
-    if(LPGvalue > 0.35*1024):
-        data = { "serial" : raspberrySerial, "sensorType" : "LPGSensor", "value" : LPGvalue }
+    if(CO2value < CO2Treshold*1024):
+        data = { "serial" : raspberrySerial, "sensorType" : "CO2Sensor", "value" : CO2value }
         allData.append(data)
         
-    if(valueFlame > 0):
-        data = { "serial" : raspberrySerial, "sensorType" : "FlameSensor", "value" : valueFlame }
-        allData.append(data)
-        
-    if(tempValue > 30):
+    if(tempValue > TempTreshold):
         data = { "serial" : raspberrySerial, "sensorType" : "TempSensor", "value" : tempValue }
-        allData.append(data)
-
-    if allData != []:
-        print((time.time() - sendedTimestamp[allData[0]['sensorType']]))        
+        allData.append(data)       
     
-    if allData != [] and (time.time() - sendedTimestamp[allData[0]['sensorType']] > 60):
+    if allData != [] and checkIfSendInfoNotificationAllowed():
         requests.post(url, json=allData, headers=headers)
         for item in allData:
             sendedTimestamp[item['sensorType']] = time.time()
         
-    previousLPGValue = LPGvalue
+    previousCO2Value = CO2value
     previousCOValue = COValue
     previousTemp = tempValue
-    previousFlame = valueFlame
 
 
 
