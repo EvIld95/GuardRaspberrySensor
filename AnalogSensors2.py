@@ -124,21 +124,38 @@ firebaseDB.child("stream").child(raspberrySerial).update(dataUpdate)
 dataUpdate = { raspberrySerial : 0 }
 firebaseDB.child("devices").update(dataUpdate)
 dataUpdate = { "tempTreshold" : 30.0, "CO2Treshold": 0.35, "COTreshold": 0.7, "cameraAlwaysOn": False}
-firebaseDB.child("settings").child(ownerWithoutDot).update(dataUpdate)
+match = firebaseDB.child("settings").child(ownerWithoutDot).get()
+if(match.val() == None):
+    firebaseDB.child("settings").child(ownerWithoutDot).update(dataUpdate)
 
 
-
-
+isCameraAlwaysOn = False
+cameraIsRunningAlways = False
 pro = -1
 def stream_handler(message):
     global pro
-    isOn = message["data"]
-    if(isOn == 1):
+    global cameraIsRunningAlways
+    global firebaseDB
+    
+    cameraAlwaysOn = firebaseDB.child("settings").child(ownerWithoutDot).child("cameraAlwaysOn").get()
+    print("IsCameraAlwaysOn: ", cameraAlwaysOn.val())
+    if(cameraAlwaysOn.val() == False):
+        isOn = message["data"]
+        if(cameraIsRunningAlways == True and pro != -1):
+            os.killpg(os.getpgid(pro.pid), signal.SIGTERM)
+        if(isOn == 1):
+            pro = subprocess.Popen('/home/pi/Desktop/RaspberrySensor/Camera/monitoring-script/monitoring.sh', stdout=subprocess.PIPE,shell=True,preexec_fn=os.setsid)
+        elif pro != -1:
+            os.killpg(os.getpgid(pro.pid), signal.SIGTERM)
+        cameraIsRunningAlways = False
+    elif cameraIsRunningAlways == False:
+        if pro != -1:
+            os.killpg(os.getpgid(pro.pid), signal.SIGTERM)
         pro = subprocess.Popen('/home/pi/Desktop/RaspberrySensor/Camera/monitoring-script/monitoring.sh', stdout=subprocess.PIPE,shell=True,preexec_fn=os.setsid)
-        #subprocess.call(['./Camera/monitoring-script/monitoring.sh'])
-    elif pro != -1:
-        os.killpg(os.getpgid(pro.pid), signal.SIGTERM)
-        #kill subprocess
+        cameraIsRunningAlways = True
+
+         
+        
 
 def checkIfSendInfoNotificationAllowed():
     for item in allData:
@@ -150,13 +167,15 @@ def settingsStream_handler(message):
     global COTreshold
     global CO2Treshold
     global TempTreshold
+    global isCameraAlwaysOn
     COTreshold = message["data"]["COTreshold"]
     CO2Treshold = message["data"]["CO2Treshold"]
     TempTreshold = message["data"]["tempTreshold"]
+    isCameraAlwaysOn = message["data"]["cameraAlwaysOn"]
     
-
-my_stream = firebaseDB.child("stream").child(raspberrySerial).child("isOn").stream(stream_handler)
 my_settingsStream = firebaseDB.child("settings").child(ownerWithoutDot).stream(settingsStream_handler)
+my_stream = firebaseDB.child("stream").child(raspberrySerial).child("isOn").stream(stream_handler)
+
 
 while True:
     valuePIR = int(wiringpi.digitalRead(pirSensorPin)) 
