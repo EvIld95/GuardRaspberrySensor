@@ -10,7 +10,7 @@ import json
 import subprocess
 import signal
 import os
-
+from mq import *
 
 url = "http://40.113.150.71:8080/backend/v1/notification"
 urlPIR = "http://40.113.150.71:8080/backend/v1/PIRnotification"
@@ -34,6 +34,8 @@ sendedTimestamp = {'CO2Sensor' : 0, 'COSensor': 0, 'TempSensor': 0, 'PIRSensor':
 os.system('modprobe w1-gpio')
 os.system('modprobe w1-therm')
 wiringpi.wiringPiSetup()
+
+
 
 #flameSensorPin = 0
 pirSensorPin = 1
@@ -60,6 +62,8 @@ TempTreshold = 30.0
 
 spi = spidev.SpiDev()
 spi.open(0, 0)
+
+mq = MQ()
 
 def readadc(adcnum):
     if adcnum > 7 or adcnum < 0:
@@ -176,36 +180,40 @@ def settingsStream_handler(message):
 my_settingsStream = firebaseDB.child("settings").child(ownerWithoutDot).stream(settingsStream_handler)
 my_stream = firebaseDB.child("stream").child(raspberrySerial).child("isOn").stream(stream_handler)
 
+def getPPM(volts):
+    zeroPointVoltage = 0.325
+    DCGain = 6
+    CO2Curve = [2.602, zeroPointVoltage, 0.2/(2.602-3)] 
+    if ((volts/DCGain) < zeroPointVoltage):
+        return pow(10, ((volts/DCGain)-CO2Curve[1])/CO2Curve[2]+CO2Curve[0])
+    else:
+        return 0
 
 while True:
-    valuePIR = int(wiringpi.digitalRead(pirSensorPin)) 
-    #valueFlame = int(not wiringpi.digitalRead(flameSensorPin))
+    #valuePIR = int(wiringpi.digitalRead(pirSensorPin)) 
     CO2value = readadc(CO2Sensor)
+    print("CO2 Sensor analog read: ", CO2value)
+    CO2value = getPPM((CO2value/1024)*5)
+    if CO2value == 0:
+        CO2value = 399
+
+    perc = mq.MQPercentage()
+    
     tempValue = read_temp()
     print("Temp Value %f" % tempValue)
-    print("CO2Sensor: %d" % CO2value)
-
-    if(valuePIR == 0):
-        print("PIRSensor: OK!")
-    else:
-        print("PIRSensor: Detected Movement!")
-    
-    
-    COValue = readadc(COSensor)
-    print("COSensor: %d" % COValue)
+    print("CO2Sensor ppm: %d" % CO2value)
+        
+    #COValue = readadc(COSensor)
+    COValue = perc["CO"]
+    print("COSensor: %g ppm" % perc["CO"])
     time.sleep(delay)
-
-    if((previousPIR != valuePIR) and (valuePIR == 1)):
-        jsonData = { "serial" : raspberrySerial, "message": "Movement detected"}
-        requests.post(urlPIR, json=jsonData, headers=headers)
-        sendedTimestamp['PIRSensor'] = time.time()
         
     if(abs(COValue - previousCOValue) > 20):
         dataUpdate = { "COSensor" : { "value" : normalizeValue(float(COValue)) } }
         firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
 
-    if(abs(CO2value - previousCO2Value) > 20):
-        dataUpdate = { "CO2Sensor" : { "value" : 1 - normalizeValue(float(CO2value)) } }
+    if(abs(CO2value - previousCO2Value) > 10):
+        dataUpdate = { "CO2Sensor" : { "value" : float(CO2value) } }
         firebaseDB.child("sensor").child(raspberrySerial).update(dataUpdate)
 
     if(tempValue != previousTemp):
